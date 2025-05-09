@@ -1,28 +1,59 @@
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' show parse;
 
-/// A single closure window.
+
+int _monthFromString(String m) {
+  switch (m.toLowerCase()) {
+    case 'january':
+    case 'jan': return 1;
+    case 'february':
+    case 'feb': return 2;
+    case 'march':
+    case 'mar': return 3;
+    case 'april':
+    case 'apr': return 4;
+    case 'may': return 5;
+    case 'june':
+    case 'jun': return 6;
+    case 'july':
+    case 'jul': return 7;
+    case 'august':
+    case 'aug': return 8;
+    case 'september':
+    case 'sep':
+    case 'sept': return 9;
+    case 'october':
+    case 'oct': return 10;
+    case 'november':
+    case 'nov': return 11;
+    case 'december':
+    case 'dec': return 12;
+    default: throw ArgumentError('Unknown month: $m');
+  }
+}
+
+
 class ClosurePeriod {
   final DateTime start;
   final DateTime end;
   ClosurePeriod({required this.start, required this.end});
 }
 
-/// The aggregated bridge status for “today”.
+
 class BridgeStatus {
-  /// All closure windows (today).
+
   final List<ClosurePeriod> closures;
 
-  /// True if we’re inside one of those windows right now.
+
   final bool isClosed;
 
-  /// If open: the next closure start; if closed: null.
+
   final DateTime? nextClosure;
 
-  /// If closed: the end of current window; if open: null.
+
   final DateTime? nextOpening;
 
-  /// Time until that next change.
+
   final Duration? timeUntilNextChange;
 
   BridgeStatus({
@@ -50,7 +81,7 @@ Future<BridgeStatus> checkRenfrewBridgeStatus() async {
   final text = container.text;
 
   final now = DateTime.now();
-  final closures = _extractClosureTimes(text, now);
+  final closures = _extractClosureTimes(text);
 
   print(closures.length);
 
@@ -91,31 +122,46 @@ Future<BridgeStatus> checkRenfrewBridgeStatus() async {
   );
 }
 
-List<ClosurePeriod> _extractClosureTimes(String text, DateTime refDate) {
-  final regex = RegExp(
+List<ClosurePeriod> _extractClosureTimes(String text) {
+  //find the date header: “Friday 9 May” or “Friday 9th May”
+  final dateRe = RegExp(
+    r'(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)',
+    caseSensitive: false,
+  );
+  final dateMatch = dateRe.firstMatch(text);
+  final now    = DateTime.now();
+  late DateTime scheduleDate;
+  if (dateMatch != null) {
+    final day   = int.parse(dateMatch.group(1)!);
+    final month = _monthFromString(dateMatch.group(2)!);
+    scheduleDate = DateTime(now.year, month, day);
+  } else {
+    // fallback to today if we can’t find it
+    scheduleDate = DateTime(now.year, now.month, now.day);
+  }
+
+  //pull out all “hh:mm am to hh:mm pm” spans
+  final timeRe = RegExp(
     r'(\d{1,2}(?:[:\.]\d{2})\s*[ap]m)\s+to\s+(\d{1,2}(?:[:\.]\d{2})\s*[ap]m)',
     caseSensitive: false,
   );
+  final periods = <ClosurePeriod>[];
 
-  final List<ClosurePeriod> periods = [];
-  for (final m in regex.allMatches(text)) {
-    final start = _parseTime(m.group(1)!, refDate);
-    var end   = _parseTime(m.group(2)!, refDate);
-
+  for (final m in timeRe.allMatches(text)) {
+    final start = _parseTime(m.group(1)!, scheduleDate);
+    var   end   = _parseTime(m.group(2)!, scheduleDate);
     if (start != null && end != null) {
-      // normalize cross-midnight spans:
+      //if it didn’t move forward, it must cross midnight
       if (!end.isAfter(start)) {
         end = end.add(Duration(days: 1));
       }
-
-      final candidate = ClosurePeriod(start: start, end: end);
-      if (!periods.any((p) =>
-      p.start == candidate.start && p.end == candidate.end
-      )) {
-        periods.add(candidate);
+      //dedupe
+      if (!periods.any((p) => p.start == start && p.end == end)) {
+        periods.add(ClosurePeriod(start: start, end: end));
       }
     }
   }
+
   return periods;
 }
 

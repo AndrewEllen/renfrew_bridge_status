@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:intl/intl.dart';
 import '../helpers/bridge_status_fetcher.dart';
 import '../widgets/smart_refresh_indicator.dart';
 
@@ -20,7 +21,7 @@ class _BridgeStatusPageState extends State<BridgeStatusPage> {
   Future<void> _launchURL() async {
     final uri = Uri.parse(_url);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      // You can handle the error here however you like
+
       throw 'Could not launch $_url';
     }
   }
@@ -48,7 +49,7 @@ class _BridgeStatusPageState extends State<BridgeStatusPage> {
       // wait for the new fetch to complete so the indicator disappears at the right time
       await _statusFuture;
     } catch (_) {
-      // swallow errors here; the FutureBuilder will show them
+      debugPrint("Refresh Error");
     }
   }
 
@@ -57,6 +58,53 @@ class _BridgeStatusPageState extends State<BridgeStatusPage> {
     _refreshTimer?.cancel();
     super.dispose();
   }
+
+
+  /// Returns “Today”, “Tomorrow”, or a full day-of-week + date.
+  String _formatDateHeader(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final dateOnly = DateTime(date.year, date.month, date.day);
+
+    if (dateOnly == today) return 'Today';
+    if (dateOnly == today.add(const Duration(days: 1))) return 'Tomorrow';
+    return DateFormat('EEEE, d MMMM').format(dateOnly);
+  }
+
+  /// Groups closures by their start‐date and builds a list of Widgets.
+  List<Widget> _buildClosureGroups(
+      List<ClosurePeriod> closures, BuildContext context) {
+    // 1) group by date
+    final Map<DateTime, List<ClosurePeriod>> groups = {};
+    for (var c in closures) {
+      final key = DateTime(c.start.year, c.start.month, c.start.day);
+      groups.putIfAbsent(key, () => []).add(c);
+    }
+    // 2) sort dates
+    final dates = groups.keys.toList()..sort();
+    final widgets = <Widget>[];
+
+    for (var date in dates) {
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          child: Text(
+            '${_formatDateHeader(date)} closures:',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+      );
+      for (var c in groups[date]!) {
+        final startFmt = TimeOfDay.fromDateTime(c.start).format(context);
+        final endFmt   = TimeOfDay.fromDateTime(c.end).format(context);
+        widgets.add(Text('• $startFmt – $endFmt'));
+      }
+    }
+
+    return widgets;
+  }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -107,17 +155,10 @@ class _BridgeStatusPageState extends State<BridgeStatusPage> {
                         ),
                         const SizedBox(height: 16),
                         if (status.closures.isNotEmpty) ...[
-                          const Text('Today’s closure times:'),
-                          ...status.closures.map((c) {
-                            final fmt = TimeOfDay.fromDateTime(c.start)
-                                .format(context);
-                            final fte = TimeOfDay.fromDateTime(c.end)
-                                .format(context);
-                            return Text('• $fmt – $fte');
-                          }),
+                          ..._buildClosureGroups(status.closures, context),
                           const SizedBox(height: 16),
                         ] else
-                          const Text('No closures listed for today.'),
+                          const Text('No closures listed.'),
                         if (status.timeUntilNextChange != null) ...[
                           status.isClosed
                               ? Text(
